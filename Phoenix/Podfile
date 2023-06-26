@@ -1,0 +1,21 @@
+# Uncomment the next line to define a global platform for your project
+# platform :macos, '13.0'
+
+target 'Phoenix' do
+  # Comment the next line if you don't want to use dynamic frameworks
+  use_frameworks!
+
+  # Pods for Phoenix
+    pod 'Alamofire'
+    pod 'IGDB-SWIFT-API', git: "https://github.com/husnjak/IGDB-API-SWIFT.git"
+
+  target 'PhoenixTests' do
+    inherit! :search_paths
+    # Pods for testing
+  end
+
+  target 'PhoenixUITests' do
+    # Pods for testing
+  end
+
+end

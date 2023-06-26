@@ -1,0 +1,6 @@
+framework module Pods_PhoenixTests {
+  umbrella header "Pods-PhoenixTests-umbrella.h"
+
+  export *
+  module * { export * }
+}
