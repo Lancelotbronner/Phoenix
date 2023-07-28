@@ -19,7 +19,7 @@ struct ContentView: View {
 		} detail: {
 			if let id = navigation.game, let $game = library.bindingOf(game: id) {
 				NavigationStack(path: $navigation.path) {
-					GameDetailView($game)
+					GameProfileView($game)
 				}
 			} else if library.games.isEmpty {
 				VStack {
