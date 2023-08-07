@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import OSLog
 
 final class SteamModel: ObservableObject {
 
@@ -18,6 +19,12 @@ final class SteamModel: ObservableObject {
 	@AppStorage("steam.import.lastDate")
 	private(set) var lastImportDate: Date?
 
+	static let logger = PhoenixApp.logger(category: "Steam")
+
+	var logger: Logger {
+		_read { yield SteamModel.logger }
+	}
+
 	lazy var steamURL: URL = {
 		URL.homeDirectory.appending(components: "Library", "Application Support", "Steam", directoryHint: .isDirectory)
 	}()
@@ -25,14 +32,14 @@ final class SteamModel: ObservableObject {
 	func checkForImport() -> Bool {
 		guard
 			isAutomaticImportEnabled,
-			let lastImportDate,
-			lastImportDate.timeIntervalSinceNow > importCheckInterval
+			lastImportDate.flatMap({ $0.timeIntervalSinceNow < -importCheckInterval }) ?? true
 		else { return false }
 		return true
 	}
 
 	func importGames(using library: LibraryModel) async {
-		await SandboxManager.shared.access(steamURL) { steamURL in
+		logger.notice("Importing Steam library")
+		await SandboxManager.shared.access(steamURL) { [self] steamURL in
 			let steamappsURL = steamURL.appending(component: "steamapps", directoryHint: .isDirectory)
 			guard FileManager.default.fileExists(atPath: steamappsURL.path(percentEncoded: false)) else { return }
 
@@ -40,11 +47,10 @@ final class SteamModel: ObservableObject {
 			do {
 				steamapps = try FileManager.default.contentsOfDirectory(at: steamappsURL, includingPropertiesForKeys: nil)
 			} catch {
-				logger.write("[ERROR]: Could not read contents of Steam directory: \(error)")
+				logger.error("Could not read contents of Steam directory: \(error)")
 				return
 			}
 
-			var games: [Game] = []
 			for fileURL in steamapps {
 				guard fileURL.lastPathComponent.hasSuffix(".acf") else { continue }
 
@@ -52,29 +58,31 @@ final class SteamModel: ObservableObject {
 				do {
 					manifest = try SteamAppManifest(contentsOf: fileURL)
 				} catch {
-					logger.write("[ERROR]: Failed to parse steam game manifest at \(fileURL)")
+					logger.error("Failed to parse game manifest at \(fileURL)")
 					continue
 				}
 
 				guard let appid = manifest["appid"].flatMap(Int.init) else {
-					logger.write("[ERROR]: Missing appid for steam game")
+					logger.error("Game manifest is missing appid")
 					continue
 				}
 
 				if let i = library.games.firstIndex(where: { $0.steam?.appid == appid }) {
-					logger.write("[INFO]: Steam game - '\(manifest["name"] ?? "")' already exists with id '\(library.games[i].id)', not overwriting games.json.")
+					logger.info("Game \(appid.description) '\(manifest["name"] ?? "")' already exists with id '\(library.games[i].id)', skipping.")
 					continue
 				}
 
 				let game = await self.extract(appid, using: manifest)
-				games.append(game)
+				logger.notice("Adding game \(appid.description) '\(game.name)' to library.")
+				await MainActor.run {
+					library.games.append(game)
+				}
 
 				// Ensure we don't get rate-limited by Steam
 				try? await Task.sleep(for: .seconds(2))
 			}
 
-			await MainActor.run { [games] in
-				library.games = games
+			await MainActor.run {
 				library.persist()
 				self.lastImportDate = .now
 			}
@@ -90,7 +98,7 @@ final class SteamModel: ObservableObject {
 			steam: SteamMetadata(appid: appid),
 			isDeleted: false)
 
-		logger.write("[INFO]: New Steam game - '\(game.name)' was detected. Adding to games list.")
+		logger.debug("Processing application \(appid.description) '\(game.name)'...")
 		async let details = fetch(detailsOf: appid)
 
 		let libraryCacheURL = steamURL.appending(components: "appcache", "librarycache", directoryHint: .isDirectory)
@@ -143,7 +151,7 @@ final class SteamModel: ObservableObject {
 		do {
 			result = try await SteampoweredClient.shared.details(of: appid)
 		} catch {
-			logger.write("[ERROR]: Failed to retrieve details of Steam app \(appid): \(error)")
+			logger.error("Failed to retrieve details of \(appid.description): \(error)")
 			print(error.localizedDescription)
 		}
 
